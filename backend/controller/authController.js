@@ -3,6 +3,13 @@ const Otp = require("../models/otpModel")
 const otpGenerator = require("otp-generator");
 const sendOtpMail = require("../utils/sendEmail");
 const bcrypt = require("bcrypt")
+const jwt = require("jsonwebtoken")
+const crypto = require("crypto")
+const Session = require("../models/sessionModel")
+
+const hash = (token)=>{
+    return crypto.createHash("sha256").update(token).digest("hex")
+}
 
 const sendOtp = async (req, res) => {
     try {
@@ -140,6 +147,81 @@ const Signup = async(req,res)=>{
     }
 }
 
+const Signin = async(req,res)=>{
+    try {
+        //fetch data from client
+        const {email,password}  = req.body
+
+        //validate user input data
+        if(!email || !password){
+            return res.status(401).json({
+                success : false,
+                message : "please fill all the field"
+            })
+        }
+
+        // check user is exist or not in db
+        const userExist = await User.findOne({email})
+        if(!userExist){
+            return res.status(401).json({
+                success :  false,
+                message : "user not found please register"
+            })
+        }
+
+        // compare password 
+        const isMatchPassword = await bcrypt.compare( password, userExist.password)
+
+        if(!isMatchPassword){
+            return res.status(401).json({
+                success : false,
+                message : "password does not match"
+            })
+        }
+
+        //generate access token
+        const accessToken = jwt.sign({
+           email : userExist.email,
+           id : userExist._id,
+           accountType : userExist.accountType
+        },process.env.JWT_SECRATE, {expiresIn : "15m"})
+
+        //generate refresh token
+        const refreshToken =  crypto.randomBytes(20).toString("hex") 
+
+        //save refresh token in db
+        await Session.create({
+            userId : userExist._id,
+            email : userExist.email,
+            refreshToken : hash(refreshToken),
+            accountType : userExist.accountType,
+            expireAt : new Date(Date.now() +30 * 24 *60 *60 *1000)
+
+        })
+
+        // send refreshtoken in cookies
+        res.cookie("refreshToken",refreshToken,{
+            httpOnly : true,
+            secure : false,
+            sameSite : "lax"
+        })
+
+        // send access token in response
+        res.status(200).json({
+            success : true,
+            message : "signin sucessfully",
+            accessToken
+        })
+    } catch (error) {
+         console.log("error", error)
+         return res.status(500).json({
+            success : false,
+            message : "internal server error"
+         })
+    }
+}
 
 
-module.exports = { sendOtp, Signup }
+
+
+module.exports = { sendOtp, Signup, Signin }
